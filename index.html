@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Games Arcade</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a1a;color:#e0e0e0;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;padding:20px}
+h1{text-align:center;font-size:2.5em;margin:30px 0 10px;background:linear-gradient(135deg,#4a9eff,#cc5de8);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.sub{text-align:center;color:#667;font-size:.95em;margin-bottom:40px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:24px;max-width:900px;margin:0 auto;padding:0 10px}
+.card{background:#12122a;border:1px solid #222248;border-radius:12px;overflow:hidden;transition:transform .2s,box-shadow .2s;cursor:pointer;text-decoration:none;color:inherit}
+.card:hover{transform:translateY(-4px);box-shadow:0 8px 30px rgba(74,158,255,.15)}
+.card-preview{height:180px;display:flex;align-items:center;justify-content:center;font-size:64px;position:relative}
+.card-body{padding:16px}
+.card-title{font-size:1.2em;font-weight:bold;margin-bottom:4px}
+.card-desc{color:#889;font-size:.85em;line-height:1.4}
+.card-tags{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.tag{font-size:.7em;padding:3px 8px;border-radius:20px;background:#1a1a3a;color:#88aacc}
+.tag.genre{background:#0d2a1a;color:#51cf66}
+.tag.tech{background:#2a1a0d;color:#ff922b}
+.footer{text-align:center;color:#445;font-size:.8em;margin-top:50px;padding:20px}
+@media(max-width:600px){h1{font-size:1.8em}.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<h1>🎮 Games Arcade</h1>
+<p class="sub">HTML5 Games — Play Instantly in Your Browser</p>
+
+<div class="grid">
+
+  <a class="card" href="space-shooter/">
+    <div class="card-preview" style="background:linear-gradient(180deg,#0a0a2e,#1a0a2e)">
+      🚀
+    </div>
+    <div class="card-body">
+      <div class="card-title">Space Shooter</div>
+      <div class="card-desc">Blast through enemy waves, collect power-ups, defeat bosses. Auto-fire enabled — just dodge and aim!</div>
+      <div class="card-tags">
+        <span class="tag genre">Shooter</span>
+        <span class="tag">Waves</span>
+        <span class="tag">Power-ups</span>
+        <span class="tag tech">Canvas</span>
+      </div>
+    </div>
+  </a>
+
+  <a class="card" href="snake-game/">
+    <div class="card-preview" style="background:linear-gradient(180deg,#0a0a0a,#0a1a0a)">
+      🐍
+    </div>
+    <div class="card-body">
+      <div class="card-title">Snake Game</div>
+      <div class="card-desc">Classic snake with speed scaling, bonus food, particles, and swipe controls. How long can you grow?</div>
+      <div class="card-tags">
+        <span class="tag genre">Classic</span>
+        <span class="tag">Snake</span>
+        <span class="tag">Touch</span>
+        <span class="tag tech">Canvas</span>
+      </div>
+    </div>
+  </a>
+
+  <a class="card" href="../promptforge/phaser-web/midnight-files/">
+    <div class="card-preview" style="background:linear-gradient(180deg,#050510,#1a1520)">
+      🕯️
+    </div>
+    <div class="card-body">
+      <div class="card-title">Midnight Files</div>
+      <div class="card-desc">Horror puzzle investigation. Explore an abandoned office, find clues, survive the entity. 3 languages.</div>
+      <div class="card-tags">
+        <span class="tag genre">Horror</span>
+        <span class="tag">Puzzle</span>
+        <span class="tag">Story</span>
+        <span class="tag tech">Phaser 3</span>
+      </div>
+    </div>
+  </a>
+
+  <a class="card" href="../promptforge/phaser-web/number-ascension/">
+    <div class="card-preview" style="background:linear-gradient(180deg,#0a0a1a,#1a1a3a)">
+      🔢
+    </div>
+    <div class="card-body">
+      <div class="card-title">Number Ascension</div>
+      <div class="card-desc">Merge same-color numbers to double! Dodge walls, collect power-ups (Freeze, 2X, Bomb), chain combos.</div>
+      <div class="card-tags">
+        <span class="tag genre">Merge</span>
+        <span class="tag">Climb</span>
+        <span class="tag">Combo</span>
+        <span class="tag tech">Phaser 3</span>
+      </div>
+    </div>
+  </a>
+
+  <a class="card" href="../promptforge/phaser-web/idle-factory/">
+    <div class="card-preview" style="background:linear-gradient(180deg,#0a0a1a,#0d1b3a)">
+      🏭
+    </div>
+    <div class="card-body">
+      <div class="card-title">Idle Factory</div>
+      <div class="card-desc">Tap to produce, upgrade 8 machines, prestige for permanent multipliers. Offline earnings up to 8 hours.</div>
+      <div class="card-tags">
+        <span class="tag genre">Idle</span>
+        <span class="tag">Clicker</span>
+        <span class="tag">Prestige</span>
+        <span class="tag tech">Phaser 3</span>
+      </div>
+    </div>
+  </a>
+
+  <a class="card" href="../promptforge/phaser-web/merge-drop/">
+    <div class="card-preview" style="background:linear-gradient(180deg,#0a0a1a,#0f1a2a)">
+      🔵
+    </div>
+    <div class="card-body">
+      <div class="card-title">Merge Drop</div>
+      <div class="card-desc">Suika-style physics merge! Drop numbered balls, same numbers merge up. 12 tiers, from 2 to 4096.</div>
+      <div class="card-tags">
+        <span class="tag genre">Puzzle</span>
+        <span class="tag">Physics</span>
+        <span class="tag">Merge</span>
+        <span class="tag tech">Phaser 3 + Matter.js</span>
+      </div>
+    </div>
+  </a>
+
+  <a class="card" href="../promptforge/phaser-web/flappy-hop/">
+    <div class="card-preview" style="background:linear-gradient(180deg,#4fc3f7,#2196f3)">
+      🐤
+    </div>
+    <div class="card-body">
+      <div class="card-title">Flappy Hop</div>
+      <div class="card-desc">One-tap endless flyer! Dodge pipes, earn medals (🥉🥈🥇), watch the sky change color every 10 points.</div>
+      <div class="card-tags">
+        <span class="tag genre">Endless</span>
+        <span class="tag">Flappy</span>
+        <span class="tag">One-tap</span>
+        <span class="tag tech">Phaser 3</span>
+      </div>
+    </div>
+  </a>
+
+</div>
+
+<div class="footer">
+  Pixiaoli Games &copy; 2026 | 7 HTML5 Games | Pure Canvas + Phaser 3
+</div>
+
+</body>
+</html>
