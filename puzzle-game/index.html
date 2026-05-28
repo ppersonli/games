@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Gem Crush — Match-3 Puzzle</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0a0618}
+body{display:flex;justify-content:center;align-items:center;font-family:'Segoe UI',system-ui,sans-serif}
+canvas{display:block;touch-action:none;cursor:pointer}
+.loader{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#cc5de8;font-size:18px;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+</style>
+</head>
+<body>
+<div class="loader">Loading...</div>
+<canvas id="c"></canvas>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// GEM CRUSH — Match-3 Puzzle Game
+// Pure HTML5 Canvas, no dependencies
+// ═══════════════════════════════════════════════════════════════
+
+document.querySelector(".loader").style.display = "none";
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+const COLS = 8, ROWS = 8;
+const GEM = 52;
+const PAD = 4;
+const BOARD_W = COLS * GEM, BOARD_H = ROWS * GEM;
+const HUD_H = 90;
+const W = BOARD_W + 24, H = BOARD_H + HUD_H + 24;
+const BX = (W - BOARD_W) / 2, BY = HUD_H + 12;
+
+function resize() {
+  const ratio = W / H;
+  let w = window.innerWidth, hh = window.innerHeight;
+  if (w / hh > ratio) w = hh * ratio; else hh = w / ratio;
+  canvas.style.width = w + "px";
+  canvas.style.height = hh + "px";
+  canvas.width = W;
+  canvas.height = H;
+}
+resize();
+window.addEventListener("resize", resize);
+
+// ── AUDIO ────────────────────────────────────────────────────
+
+let ac;
+function audio() { if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)(); }
+function tone(f, d, v, type) {
+  if (!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type || "sine"; o.connect(g); g.connect(ac.destination);
+  o.frequency.value = f;
+  g.gain.setValueAtTime(v, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + d);
+  o.start(); o.stop(ac.currentTime + d);
+}
+function sndSwap() { tone(400, 0.08, 0.06); }
+function sndMatch(n) { tone(500 + n * 100, 0.12, 0.07); setTimeout(() => tone(700 + n * 100, 0.1, 0.05), 50); }
+function sndBad() { tone(200, 0.15, 0.05, "sawtooth"); }
+function sndLevel() { [400,500,600,800].forEach((f,i) => setTimeout(() => tone(f, 0.15, 0.06), i*80)); }
+
+// ── GEM COLORS ───────────────────────────────────────────────
+
+const GEM_COLORS = [
+  { fill: "#ff4444", glow: "#ff0000", light: "#ff8888", dark: "#cc0000", icon: "♦" },
+  { fill: "#44aaff", glow: "#0066ff", light: "#88ccff", dark: "#0044cc", icon: "●" },
+  { fill: "#44dd44", glow: "#00cc00", light: "#88ff88", dark: "#009900", icon: "▲" },
+  { fill: "#ffdd44", glow: "#ffcc00", light: "#ffee88", dark: "#cc9900", icon: "★" },
+  { fill: "#cc55ff", glow: "#aa00ff", light: "#dd88ff", dark: "#8800cc", icon: "◆" },
+  { fill: "#ff8844", glow: "#ff6600", light: "#ffaa77", dark: "#cc5500", icon: "■" },
+];
+
+const NUM_TYPES = 6;
+
+// ── PARTICLES ────────────────────────────────────────────────
+
+let particles = [];
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 60 + Math.random() * 120;
+    particles.push({
+      x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 40,
+      life: 0.4 + Math.random() * 0.4, maxLife: 0.6,
+      size: 2 + Math.random() * 4, color,
+    });
+  }
+}
+
+// ── GAME STATE ───────────────────────────────────────────────
+
+let board = [];      // board[row][col] = gem type (0-5) or -1
+let gemX = [];       // gemX[row][col] = animated x offset
+let gemY = [];       // gemY[row][col] = animated y offset
+let gemAlpha = [];   // gemAlpha[row][col] = animated alpha
+
+let selected = null; // {r, c}
+let score = 0, level = 1, movesLeft = 30;
+let targetScore = 500;
+let gameState = "menu"; // menu, playing, animating, gameover
+let combo = 0;
+let animQueue = [];   // animation queue
+let scorePopups = [];
+let highScore = parseInt(localStorage.getItem("gem_high") || "0");
+let shakeTimer = 0;
+let shakeX = 0, shakeY = 0;
+
+function init() {
+  board = []; gemX = []; gemY = []; gemAlpha = [];
+  score = 0; level = 1; movesLeft = 30; targetScore = 500;
+  combo = 0; selected = null; particles = []; scorePopups = [];
+
+  for (let r = 0; r < ROWS; r++) {
+    board[r] = []; gemX[r] = []; gemY[r] = []; gemAlpha[r] = [];
+    for (let c = 0; c < COLS; c++) {
+      let t;
+      do { t = Math.floor(Math.random() * NUM_TYPES); }
+      while ((c >= 2 && board[r][c-1] === t && board[r][c-2] === t) ||
+             (r >= 2 && board[r-1][c] === t && board[r-2][c] === t));
+      board[r][c] = t;
+      gemX[r][c] = 0; gemY[r][c] = 0; gemAlpha[r][c] = 1;
+    }
+  }
+
+  // Remove any initial matches silently
+  while (findMatches().length > 0) {
+    for (const m of findMatches()) board[m.r][m.c] = Math.floor(Math.random() * NUM_TYPES);
+  }
+}
+
+// ── MATCH FINDING ────────────────────────────────────────────
+
+function findMatches() {
+  const matched = new Set();
+
+  // Horizontal
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS - 2; c++) {
+      const t = board[r][c];
+      if (t < 0) continue;
+      if (board[r][c+1] === t && board[r][c+2] === t) {
+        let end = c + 2;
+        while (end + 1 < COLS && board[r][end+1] === t) end++;
+        for (let x = c; x <= end; x++) matched.add(r * COLS + x);
+      }
+    }
+  }
+
+  // Vertical
+  for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < ROWS - 2; r++) {
+      const t = board[r][c];
+      if (t < 0) continue;
+      if (board[r+1][c] === t && board[r+2][c] === t) {
+        let end = r + 2;
+        while (end + 1 < ROWS && board[end+1][c] === t) end++;
+        for (let y = r; y <= end; y++) matched.add(y * COLS + c);
+      }
+    }
+  }
+
+  return [...matched].map(id => ({ r: Math.floor(id / COLS), c: id % COLS }));
+}
+
+// ── VALID MOVES CHECK ────────────────────────────────────────
+
+function hasValidMoves() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      // Try swap right
+      if (c < COLS - 1) {
+        swap(r, c, r, c + 1);
+        if (findMatches().length > 0) { swap(r, c, r, c + 1); return true; }
+        swap(r, c, r, c + 1);
+      }
+      // Try swap down
+      if (r < ROWS - 1) {
+        swap(r, c, r + 1, c);
+        if (findMatches().length > 0) { swap(r, c, r + 1, c); return true; }
+        swap(r, c, r + 1, c);
+      }
+    }
+  }
+  return false;
+}
+
+function swap(r1, c1, r2, c2) {
+  const t = board[r1][c1]; board[r1][c1] = board[r2][c2]; board[r2][c2] = t;
+}
+
+// ── ANIMATION SYSTEM ─────────────────────────────────────────
+
+const ANIM_SPEED = 8;
+
+function animateSwap(r1, c1, r2, c2, cb) {
+  gameState = "animating";
+  sndSwap();
+  const dx = (c2 - c1), dy = (r2 - r1);
+  let progress = 0;
+
+  function step() {
+    progress += 0.08;
+    if (progress >= 1) {
+      gemX[r1][c1] = 0; gemY[r1][c1] = 0;
+      gemX[r2][c2] = 0; gemY[r2][c2] = 0;
+      cb();
+      return;
+    }
+    const t = progress;
+    gemX[r1][c1] = dx * GEM * t; gemY[r1][c1] = dy * GEM * t;
+    gemX[r2][c2] = -dx * GEM * t; gemY[r2][c2] = -dy * GEM * t;
+    requestAnimationFrame(step);
+  }
+  step();
+}
+
+function animateMatch(matches, cb) {
+  gameState = "animating";
+  combo++;
+  sndMatch(combo);
+
+  const pts = matches.length * 10 * combo;
+  score += pts;
+  movesLeft += Math.floor(matches.length / 4);
+
+  // Popup
+  const avgX = matches.reduce((s, m) => s + m.c, 0) / matches.length;
+  const avgY = matches.reduce((s, m) => s + m.r, 0) / matches.length;
+  scorePopups.push({
+    x: BX + avgX * GEM + GEM / 2,
+    y: BY + avgY * GEM + GEM / 2,
+    text: "+" + pts + (combo > 1 ? " x" + combo : ""),
+    life: 1.0, color: combo > 2 ? "#ffd43b" : "#fff",
+  });
+
+  // Particles
+  for (const m of matches) {
+    const type = board[m.r][m.c];
+    spawnParticles(BX + m.c * GEM + GEM / 2, BY + m.r * GEM + GEM / 2,
+      GEM_COLORS[type >= 0 ? type : 0].fill, 4);
+    board[m.r][m.c] = -1;
+  }
+
+  shakeTimer = 0.15;
+  let progress = 0;
+  function step() {
+    progress += 0.1;
+    if (progress >= 1) {
+      for (const m of matches) gemAlpha[m.r][m.c] = 0;
+      cb();
+      return;
+    }
+    for (const m of matches) gemAlpha[m.r][m.c] = 1 - progress;
+    requestAnimationFrame(step);
+  }
+  step();
+}
+
+function animateFall(cb) {
+  gameState = "animating";
+  let maxDist = 0;
+
+  // Calculate falls
+  for (let c = 0; c < COLS; c++) {
+    let empty = 0;
+    for (let r = ROWS - 1; r >= 0; r--) {
+      if (board[r][c] < 0) {
+        empty++;
+      } else if (empty > 0) {
+        board[r + empty][c] = board[r][c];
+        board[r][c] = -1;
+        gemY[r + empty][c] = -empty * GEM;
+        gemAlpha[r + empty][c] = 1;
+        maxDist = Math.max(maxDist, empty);
+      }
+    }
+    // Fill top
+    for (let r = 0; r < empty; r++) {
+      board[r][c] = Math.floor(Math.random() * NUM_TYPES);
+      gemY[r][c] = -(empty) * GEM;
+      gemAlpha[r][c] = 1;
+      maxDist = Math.max(maxDist, empty);
+    }
+  }
+
+  if (maxDist === 0) { cb(); return; }
+
+  let done = false;
+  function step() {
+    let anyMoving = false;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (gemY[r][c] < 0) {
+          gemY[r][c] += Math.max(4, -gemY[r][c] * 0.2);
+          if (gemY[r][c] >= 0) gemY[r][c] = 0; else anyMoving = true;
+        }
+      }
+    }
+    if (anyMoving) requestAnimationFrame(step);
+    else if (!done) { done = true; cb(); }
+  }
+  step();
+}
+
+// ── GAME LOGIC ───────────────────────────────────────────────
+
+function doSwap(r1, c1, r2, c2) {
+  if (gameState !== "playing") return;
+  gameState = "animating";
+  combo = 0;
+
+  swap(r1, c1, r2, c2);
+
+  animateSwap(r1, c1, r2, c2, () => {
+    const matches = findMatches();
+    if (matches.length > 0) {
+      movesLeft--;
+      processMatches();
+    } else {
+      // Swap back
+      swap(r1, c1, r2, c2);
+      sndBad();
+      animateSwap(r1, c1, r2, c2, () => {
+        gameState = "playing";
+      });
+    }
+  });
+}
+
+function processMatches() {
+  const matches = findMatches();
+  if (matches.length === 0) {
+    // Check level up
+    if (score >= targetScore) {
+      level++;
+      targetScore += level * 300;
+      movesLeft += 10;
+      sndLevel();
+      scorePopups.push({ x: W / 2, y: H / 2 - 40, text: "LEVEL " + level + "!", life: 2.0, color: "#ffd43b" });
+    }
+    // Check game over
+    if (movesLeft <= 0) {
+      if (score > highScore) { highScore = score; localStorage.setItem("gem_high", String(highScore)); }
+      gameState = "gameover";
+      return;
+    }
+    // Check for valid moves
+    if (!hasValidMoves()) {
+      // Shuffle board
+      scorePopups.push({ x: W / 2, y: H / 2, text: "SHUFFLE!", life: 1.5, color: "#ff922b" });
+      shuffleBoard();
+    }
+    gameState = "playing";
+    return;
+  }
+
+  animateMatch(matches, () => {
+    animateFall(() => {
+      processMatches(); // Cascade
+    });
+  });
+}
+
+function shuffleBoard() {
+  const gems = [];
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      gems.push(board[r][c]);
+
+  // Fisher-Yates
+  for (let i = gems.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [gems[i], gems[j]] = [gems[j], gems[i]];
+  }
+
+  let idx = 0;
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      board[r][c] = gems[idx++];
+
+  // Remove initial matches
+  while (findMatches().length > 0) {
+    for (const m of findMatches()) board[m.r][m.c] = Math.floor(Math.random() * NUM_TYPES);
+  }
+}
+
+// ── DRAW ─────────────────────────────────────────────────────
+
+function gemPos(r, c) {
+  return {
+    x: BX + c * GEM + gemX[r][c],
+    y: BY + r * GEM + gemY[r][c],
+  };
+}
+
+function drawBoard() {
+  // Board background
+  ctx.fillStyle = "#0d0a1a";
+  ctx.strokeStyle = "#2a2050";
+  ctx.lineWidth = 2;
+  roundRect(BX - 4, BY - 4, BOARD_W + 8, BOARD_H + 8, 8, true, true);
+
+  // Grid cells
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const x = BX + c * GEM, y = BY + r * GEM;
+      ctx.fillStyle = (r + c) % 2 === 0 ? "#12102a" : "#15122e";
+      ctx.fillRect(x, y, GEM, GEM);
+    }
+  }
+}
+
+function drawGems() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const t = board[r][c];
+      if (t < 0) continue;
+
+      const pos = gemPos(r, c);
+      const gc = GEM_COLORS[t];
+      const alpha = gemAlpha[r][c];
+      const isSelected = selected && selected.r === r && selected.c === c;
+      const pad = PAD + (isSelected ? 0 : 2);
+      const sz = GEM - pad * 2;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+
+      // Glow
+      if (isSelected) {
+        ctx.shadowColor = gc.glow;
+        ctx.shadowBlur = 15;
+      }
+
+      // Gem body
+      const gx = pos.x + pad, gy = pos.y + pad;
+      ctx.fillStyle = gc.fill;
+      roundRect(gx, gy, sz, sz, 8, true, false);
+
+      // Highlight
+      ctx.fillStyle = gc.light;
+      ctx.globalAlpha = alpha * 0.4;
+      roundRect(gx + 3, gy + 3, sz - 6, sz / 2 - 3, 6, true, false);
+
+      // Shadow bottom
+      ctx.fillStyle = gc.dark;
+      ctx.globalAlpha = alpha * 0.3;
+      ctx.fillRect(gx + 4, gy + sz - 8, sz - 8, 5);
+
+      // Icon
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.fillStyle = "#fff";
+      ctx.shadowBlur = 0;
+      ctx.font = "bold 18px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(gc.icon, pos.x + GEM / 2, pos.y + GEM / 2 + 1);
+
+      // Selection ring
+      if (isSelected) {
+        ctx.globalAlpha = 0.6 + 0.4 * Math.sin(Date.now() * 0.006);
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 3;
+        ctx.shadowColor = "#fff";
+        ctx.shadowBlur = 8;
+        roundRect(gx - 1, gy - 1, sz + 2, sz + 2, 9, false, true);
+      }
+
+      ctx.restore();
+    }
+  }
+}
+
+function drawHUD() {
+  // Background
+  ctx.fillStyle = "#0a0618";
+  ctx.fillRect(0, 0, W, HUD_H);
+
+  // Score
+  ctx.fillStyle = "#fff";
+  ctx.shadowColor = "#cc5de8";
+  ctx.shadowBlur = 8;
+  ctx.font = "bold 28px 'Segoe UI', sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText(String(score), 14, 38);
+  ctx.shadowBlur = 0;
+
+  // Level
+  ctx.fillStyle = "#cc5de8";
+  ctx.font = "bold 13px sans-serif";
+  ctx.fillText("LEVEL " + level, 14, 58);
+
+  // Target progress bar
+  const prevTarget = targetScore - level * 300;
+  const progress = Math.min(1, (score - prevTarget) / (targetScore - prevTarget));
+  ctx.fillStyle = "#1a1030";
+  roundRect(14, 65, 120, 10, 5, true, false);
+  ctx.fillStyle = "#cc5de8";
+  roundRect(14, 65, 120 * progress, 10, 5, true, false);
+
+  // Moves
+  ctx.textAlign = "right";
+  ctx.fillStyle = movesLeft <= 5 ? "#ff4444" : "#fff";
+  ctx.font = "bold 28px 'Segoe UI', sans-serif";
+  ctx.fillText(String(movesLeft), W - 14, 38);
+  ctx.fillStyle = "#888";
+  ctx.font = "12px sans-serif";
+  ctx.fillText("MOVES", W - 14, 55);
+
+  // High score
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#ffd43b";
+  ctx.font = "12px sans-serif";
+  ctx.fillText("BEST: " + highScore, W / 2, 18);
+
+  // Combo indicator
+  if (combo > 1) {
+    ctx.fillStyle = "#ffd43b";
+    ctx.shadowColor = "#ffd43b";
+    ctx.shadowBlur = 10;
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillText("COMBO x" + combo + "!", W / 2, 38);
+    ctx.shadowBlur = 0;
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = p.life / p.maxLife;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawPopups() {
+  for (const p of scorePopups) {
+    ctx.globalAlpha = Math.min(1, p.life);
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.font = "bold 20px 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+}
+
+function drawMenu() {
+  ctx.fillStyle = "#0a0618";
+  ctx.fillRect(0, 0, W, H);
+
+  // Decorative gems
+  for (let i = 0; i < 20; i++) {
+    const t = i % NUM_TYPES;
+    const x = (i * 67 + 30) % W;
+    const y = (i * 43 + 50) % H;
+    const gc = GEM_COLORS[t];
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = gc.fill;
+    roundRect(x - 15, y - 15, 30, 30, 6, true, false);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.textAlign = "center";
+
+  ctx.fillStyle = "#cc5de8";
+  ctx.shadowColor = "#cc5de8";
+  ctx.shadowBlur = 20;
+  ctx.font = "bold 42px 'Segoe UI', sans-serif";
+  ctx.fillText("GEM CRUSH", W / 2, 180);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = "#8877aa";
+  ctx.font = "16px sans-serif";
+  ctx.fillText("Match-3 Puzzle", W / 2, 215);
+
+  ctx.fillStyle = "#99aacc";
+  ctx.font = "14px sans-serif";
+  ctx.fillText("Swap adjacent gems to match 3+", W / 2, 280);
+  ctx.fillText("Tap gem, then tap neighbor to swap", W / 2, 305);
+  ctx.fillText("Chain matches for combo bonus!", W / 2, 330);
+
+  if (highScore > 0) {
+    ctx.fillStyle = "#ffd43b";
+    ctx.font = "16px sans-serif";
+    ctx.fillText("BEST: " + highScore, W / 2, 390);
+  }
+
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() * 0.004);
+  ctx.globalAlpha = 0.4 + pulse * 0.6;
+  ctx.fillStyle = "#cc5de8";
+  ctx.font = "bold 20px 'Segoe UI', sans-serif";
+  ctx.fillText("[ TAP TO START ]", W / 2, 450);
+  ctx.globalAlpha = 1;
+}
+
+function drawGameOver() {
+  ctx.fillStyle = "rgba(10,6,24,0.85)";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = "center";
+
+  ctx.fillStyle = "#ff4444";
+  ctx.shadowColor = "#ff4444";
+  ctx.shadowBlur = 15;
+  ctx.font = "bold 38px 'Segoe UI', sans-serif";
+  ctx.fillText("GAME OVER", W / 2, 220);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "24px sans-serif";
+  ctx.fillText("Score: " + score, W / 2, 280);
+  ctx.fillText("Level: " + level, W / 2, 315);
+
+  if (score >= highScore && score > 0) {
+    ctx.fillStyle = "#ffd43b";
+    ctx.font = "bold 18px sans-serif";
+    ctx.fillText("NEW BEST!", W / 2, 360);
+  }
+
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() * 0.004);
+  ctx.globalAlpha = 0.4 + pulse * 0.6;
+  ctx.fillStyle = "#cc5de8";
+  ctx.font = "bold 18px sans-serif";
+  ctx.fillText("[ TAP TO RESTART ]", W / 2, 430);
+  ctx.globalAlpha = 1;
+}
+
+// ── HELPERS ──────────────────────────────────────────────────
+
+function roundRect(x, y, w, h, r, fill, stroke) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  if (fill) ctx.fill();
+  if (stroke) ctx.stroke();
+}
+
+// ── INPUT ────────────────────────────────────────────────────
+
+function boardFromScreen(sx, sy) {
+  const c = Math.floor((sx - BX) / GEM);
+  const r = Math.floor((sy - BY) / GEM);
+  if (r >= 0 && r < ROWS && c >= 0 && c < COLS) return { r, c };
+  return null;
+}
+
+canvas.addEventListener("pointerdown", e => {
+  audio();
+  const rect = canvas.getBoundingClientRect();
+  const sx = (e.clientX - rect.left) / rect.width * W;
+  const sy = (e.clientY - rect.top) / rect.height * H;
+
+  if (gameState === "menu") { init(); gameState = "playing"; return; }
+  if (gameState === "gameover") { init(); gameState = "playing"; return; }
+  if (gameState !== "playing") return;
+
+  const cell = boardFromScreen(sx, sy);
+  if (!cell) { selected = null; return; }
+
+  if (!selected) {
+    selected = cell;
+  } else {
+    const dr = Math.abs(cell.r - selected.r);
+    const dc = Math.abs(cell.c - selected.c);
+    if ((dr === 1 && dc === 0) || (dr === 0 && dc === 1)) {
+      doSwap(selected.r, selected.c, cell.r, cell.c);
+      selected = null;
+    } else {
+      selected = cell;
+    }
+  }
+});
+
+// ── UPDATE ───────────────────────────────────────────────────
+
+function update(dt) {
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vy += 200 * dt;
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Score popups
+  for (let i = scorePopups.length - 1; i >= 0; i--) {
+    scorePopups[i].y -= 40 * dt;
+    scorePopups[i].life -= dt;
+    if (scorePopups[i].life <= 0) scorePopups.splice(i, 1);
+  }
+
+  // Shake
+  if (shakeTimer > 0) {
+    shakeTimer -= dt;
+    shakeX = (Math.random() - 0.5) * 6;
+    shakeY = (Math.random() - 0.5) * 6;
+  } else {
+    shakeX = 0; shakeY = 0;
+  }
+}
+
+// ── MAIN LOOP ────────────────────────────────────────────────
+
+let lastTime = 0;
+init();
+
+function loop(ts) {
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+
+  ctx.clearRect(0, 0, W, H);
+
+  if (gameState === "menu") {
+    drawMenu();
+  } else {
+    update(dt);
+
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+
+    drawBoard();
+    drawGems();
+    drawParticles();
+    drawPopups();
+
+    ctx.restore();
+
+    drawHUD();
+
+    if (gameState === "gameover") drawGameOver();
+  }
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
