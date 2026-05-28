@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Cookie Clicker</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#1a1008}
+body{display:flex;justify-content:center;align-items:center;font-family:'Segoe UI',system-ui,sans-serif}
+canvas{display:block;touch-action:none;cursor:pointer}
+.loader{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#d4a048;font-size:18px;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+</style>
+</head>
+<body>
+<div class="loader">Loading...</div>
+<canvas id="c"></canvas>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// COOKIE CLICKER — Vanilla Canvas Idle/Clicker
+// Big cookie, upgrades, offline earnings, particles, save
+// ═══════════════════════════════════════════════════════════════
+
+document.querySelector(".loader").style.display = "none";
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+const W = 900, H = 600;
+const COOKIE_X = 300, COOKIE_Y = 300, COOKIE_R = 100;
+const SHOP_X = 540, SHOP_W = 170;
+const STATS_X = 720, STATS_W = 170;
+
+function resize() {
+  const ratio = W / H;
+  let w = window.innerWidth, hh = window.innerHeight;
+  if (w / hh > ratio) w = hh * ratio; else hh = w / ratio;
+  canvas.style.width = w + "px";
+  canvas.style.height = hh + "px";
+  canvas.width = W;
+  canvas.height = H;
+}
+resize();
+window.addEventListener("resize", resize);
+
+// ── AUDIO ────────────────────────────────────────────────────
+
+let ac;
+function audio() { if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)(); }
+function clickSound() {
+  if (!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.connect(g); g.connect(ac.destination);
+  o.frequency.value = 600 + Math.random() * 200;
+  g.gain.setValueAtTime(0.06, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.08);
+  o.start(); o.stop(ac.currentTime + 0.08);
+}
+function buySound() {
+  if (!ac) return;
+  [400, 500, 700].forEach((f, i) => {
+    setTimeout(() => {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.connect(g); g.connect(ac.destination);
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.04, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.1);
+      o.start(); o.stop(ac.currentTime + 0.1);
+    }, i * 50);
+  });
+}
+
+// ── NUMBER FORMATTING ────────────────────────────────────────
+
+const SFX = ["", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc"];
+function fmt(n) {
+  if (n < 1000) return Math.floor(n).toString();
+  const t = Math.floor(Math.log10(Math.abs(n)) / 3);
+  if (t >= SFX.length) return n.toExponential(1);
+  const s = n / Math.pow(10, t * 3);
+  return s.toFixed(s < 10 ? 2 : s < 100 ? 1 : 0) + SFX[t];
+}
+function fmtRate(n) { return n < 100 ? n.toFixed(1) : fmt(n); }
+
+// ── GAME DATA ────────────────────────────────────────────────
+
+const UPGRADES = [
+  { id: "cursor",   name: "Cursor",      icon: "👆", baseCost: 15,       mul: 1.15, cps: 0.1,   desc: "Autoclicks once per 10s" },
+  { id: "grandma",  name: "Grandma",     icon: "👵", baseCost: 100,      mul: 1.15, cps: 1,     desc: "Bakes cookies with love" },
+  { id: "farm",     name: "Farm",        icon: "🌾", baseCost: 1100,     mul: 1.15, cps: 8,     desc: "Grows cookie plants" },
+  { id: "factory",  name: "Factory",     icon: "🏭", baseCost: 12000,    mul: 1.15, cps: 47,    desc: "Mass cookie production" },
+  { id: "mine",     name: "Mine",        icon: "⛏️", baseCost: 130000,   mul: 1.15, cps: 260,   desc: "Mines cookie dough" },
+];
+
+const CLICK_UPGRADES = [
+  { id: "click2x", name: "Double Click", icon: "✨", cost: 100,    mult: 2, desc: "Click power ×2" },
+  { id: "click5x", name: "Mega Click",   icon: "⚡", cost: 5000,   mult: 5, desc: "Click power ×5" },
+  { id: "click10x", name: "Ultra Click", icon: "💫", cost: 500000, mult: 10, desc: "Click power ×10" },
+];
+
+// ── STATE ────────────────────────────────────────────────────
+
+const S = {
+  cookies: 0, totalBaked: 0, lifetimeBaked: 0, clicks: 0,
+  counts: {}, clickMult: 1, lastSave: 0,
+};
+for (const u of UPGRADES) S.counts[u.id] = 0;
+
+function save() {
+  S.lastSave = Date.now();
+  try { localStorage.setItem("cc2_save", JSON.stringify(S)); } catch {}
+}
+
+function load() {
+  try {
+    const d = JSON.parse(localStorage.getItem("cc2_save"));
+    if (!d) return false;
+    Object.assign(S, d);
+    for (const u of UPGRADES) if (S.counts[u.id] === undefined) S.counts[u.id] = 0;
+    return true;
+  } catch { return false; }
+}
+
+function hasSave() { try { return !!localStorage.getItem("cc2_save"); } catch { return false; } }
+
+function totalCPS() {
+  let cps = 0;
+  for (const u of UPGRADES) cps += u.cps * (S.counts[u.id] || 0);
+  return cps;
+}
+
+function clickValue() { return Math.max(1, Math.floor(S.clickMult + totalCPS() * 0.01)); }
+
+function upgradeCost(idx) { return Math.floor(UPGRADES[idx].baseCost * Math.pow(UPGRADES[idx].mul, S.counts[UPGRADES[idx].id] || 0)); }
+
+function offlineEarnings() {
+  const sec = Math.min((Date.now() - S.lastSave) / 1000, 3600 * 8);
+  return sec < 10 ? 0 : totalCPS() * sec * 0.5;
+}
+
+// ── PARTICLES ────────────────────────────────────────────────
+
+let particles = [];
+let floatTexts = [];
+let crumbs = [];
+
+function spawnFloat(x, y, text, color) {
+  floatTexts.push({ x, y, text, color, life: 1.0, vy: -60 });
+}
+
+function spawnCrumbs(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2, s = 50 + Math.random() * 100;
+    crumbs.push({
+      x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 30,
+      life: 0.4 + Math.random() * 0.3, size: 2 + Math.random() * 4,
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = floatTexts.length - 1; i >= 0; i--) {
+    floatTexts[i].y += floatTexts[i].vy * dt;
+    floatTexts[i].life -= dt;
+    if (floatTexts[i].life <= 0) floatTexts.splice(i, 1);
+  }
+  for (let i = crumbs.length - 1; i >= 0; i--) {
+    const c = crumbs[i];
+    c.x += c.vx * dt; c.y += c.vy * dt; c.vy += 200 * dt; c.life -= dt;
+    if (c.life <= 0) crumbs.splice(i, 1);
+  }
+}
+
+function drawParticles() {
+  for (const f of floatTexts) {
+    ctx.globalAlpha = Math.min(1, f.life * 2);
+    ctx.fillStyle = f.color;
+    ctx.font = "bold 20px 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  for (const c of crumbs) {
+    ctx.globalAlpha = c.life * 2;
+    ctx.fillStyle = "#d4a048";
+    ctx.fillRect(c.x - c.size / 2, c.y - c.size / 2, c.size, c.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ── COOKIE DRAWING ───────────────────────────────────────────
+
+let cookieScale = 1;
+let cookieGlow = 0;
+
+function drawCookie() {
+  const r = COOKIE_R * cookieScale;
+
+  // Glow
+  cookieGlow *= 0.95;
+  if (cookieGlow > 0.01) {
+    ctx.beginPath();
+    ctx.arc(COOKIE_X, COOKIE_Y, r + 20, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(212,160,72,${cookieGlow * 0.15})`;
+    ctx.fill();
+  }
+
+  // Shadow
+  ctx.beginPath();
+  ctx.arc(COOKIE_X + 4, COOKIE_Y + 6, r, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.fill();
+
+  // Cookie body
+  ctx.beginPath();
+  ctx.arc(COOKIE_X, COOKIE_Y, r, 0, Math.PI * 2);
+  const grad = ctx.createRadialGradient(COOKIE_X - r * 0.3, COOKIE_Y - r * 0.3, 0, COOKIE_X, COOKIE_Y, r);
+  grad.addColorStop(0, "#e0a050");
+  grad.addColorStop(0.7, "#c8883c");
+  grad.addColorStop(1, "#a06828");
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Chips
+  ctx.fillStyle = "#6b4226";
+  const chips = [[-25,-30],[20,-15],[-35,20],[30,25],[0,40],[-20,-50],[35,-35],[8,8],[-10,30],[25,-5]];
+  for (const [dx, dy] of chips) {
+    ctx.beginPath();
+    ctx.arc(COOKIE_X + dx * (r / COOKIE_R), COOKIE_Y + dy * (r / COOKIE_R), 5 * (r / COOKIE_R), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Highlight
+  ctx.beginPath();
+  ctx.arc(COOKIE_X - r * 0.25, COOKIE_Y - r * 0.25, r * 0.35, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  ctx.fill();
+}
+
+// ── SHOP PANEL ───────────────────────────────────────────────
+
+let shopScroll = 0;
+let hoverUpgrade = -1;
+let hoverClickUpg = -1;
+
+function drawShop() {
+  // Background
+  ctx.fillStyle = "#141008";
+  ctx.fillRect(SHOP_X, 0, SHOP_W, H);
+  ctx.strokeStyle = "#2a2010";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(SHOP_X, 0); ctx.lineTo(SHOP_X, H); ctx.stroke();
+
+  // Title
+  ctx.fillStyle = "#a08050";
+  ctx.font = "bold 14px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("UPGRADES", SHOP_X + SHOP_W / 2, 22);
+
+  let y = 40 - shopScroll;
+
+  // Auto-clicker upgrades
+  for (let i = 0; i < UPGRADES.length; i++) {
+    const u = UPGRADES[i];
+    const cost = upgradeCost(i);
+    const count = S.counts[u.id] || 0;
+    const canBuy = S.cookies >= cost;
+    const isHover = i === hoverUpgrade;
+
+    if (y > -60 && y < H) {
+      // Background
+      ctx.fillStyle = isHover ? "#1e1808" : "#181408";
+      ctx.fillRect(SHOP_X + 5, y, SHOP_W - 10, 56);
+      ctx.strokeStyle = isHover ? "#3a3018" : "#221c0c";
+      ctx.strokeRect(SHOP_X + 5, y, SHOP_W - 10, 56);
+
+      // Icon
+      ctx.font = "22px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(u.icon, SHOP_X + 12, y + 28);
+
+      // Name
+      ctx.fillStyle = canBuy ? "#d4c0a0" : "#665544";
+      ctx.font = "bold 12px sans-serif";
+      ctx.fillText(u.name, SHOP_X + 40, y + 16);
+
+      // CPS info
+      ctx.fillStyle = "#887766";
+      ctx.font = "10px sans-serif";
+      ctx.fillText("+" + u.cps + "/s each  ×" + count, SHOP_X + 40, y + 30);
+
+      // Cost
+      ctx.fillStyle = canBuy ? "#ffd43b" : "#665544";
+      ctx.font = "bold 12px sans-serif";
+      ctx.fillText("🍪 " + fmt(cost), SHOP_X + 40, y + 46);
+    }
+    y += 60;
+  }
+
+  // Separator
+  y += 5;
+  if (y > -10 && y < H) {
+    ctx.fillStyle = "#2a2010";
+    ctx.fillRect(SHOP_X + 10, y, SHOP_W - 20, 1);
+    ctx.fillStyle = "#887766";
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("CLICK POWER", SHOP_X + SHOP_W / 2, y + 14);
+  }
+  y += 22;
+
+  // Click upgrades
+  for (let i = 0; i < CLICK_UPGRADES.length; i++) {
+    const u = CLICK_UPGRADES[i];
+    const bought = S.clickMult >= u.mult;
+    const canBuy = !bought && S.cookies >= u.cost;
+    const isHover = i === hoverClickUpg;
+
+    if (y > -60 && y < H) {
+      ctx.fillStyle = bought ? "#1a2a1a" : isHover ? "#1e1808" : "#181408";
+      ctx.fillRect(SHOP_X + 5, y, SHOP_W - 10, 48);
+      ctx.strokeStyle = bought ? "#2a4a2a" : isHover ? "#3a3018" : "#221c0c";
+      ctx.strokeRect(SHOP_X + 5, y, SHOP_W - 10, 48);
+
+      ctx.font = "18px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(u.icon, SHOP_X + 12, y + 25);
+
+      ctx.fillStyle = bought ? "#51cf66" : canBuy ? "#d4c0a0" : "#665544";
+      ctx.font = "bold 12px sans-serif";
+      ctx.fillText(u.name, SHOP_X + 38, y + 16);
+
+      ctx.fillStyle = bought ? "#51cf66" : canBuy ? "#ffd43b" : "#665544";
+      ctx.font = "12px sans-serif";
+      ctx.fillText(bought ? "✓ OWNED" : "🍪 " + fmt(u.cost), SHOP_X + 38, y + 34);
+    }
+    y += 52;
+  }
+}
+
+// ── STATS PANEL ──────────────────────────────────────────────
+
+function drawStats() {
+  ctx.fillStyle = "#100c04";
+  ctx.fillRect(STATS_X, 0, STATS_W, H);
+  ctx.strokeStyle = "#2a2010";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(STATS_X, 0); ctx.lineTo(STATS_X, H); ctx.stroke();
+
+  ctx.fillStyle = "#a08050";
+  ctx.font = "bold 13px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("STATISTICS", STATS_X + STATS_W / 2, 22);
+
+  const stats = [
+    ["Per Click", "🍪 " + fmt(clickValue())],
+    ["Per Second", fmtRate(totalCPS()) + "/s"],
+    ["Total Baked", fmt(S.totalBaked)],
+    ["In Bank", fmt(S.cookies)],
+    ["Total Clicks", fmt(S.clicks)],
+    ["Click Power", "×" + S.clickMult],
+  ];
+
+  let y = 45;
+  for (const [label, value] of stats) {
+    ctx.fillStyle = "#887766";
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(label, STATS_X + 10, y);
+    ctx.fillStyle = "#d4c0a0";
+    ctx.font = "bold 12px sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText(value, STATS_X + STATS_W - 10, y + 14);
+    y += 36;
+  }
+
+  // Buildings summary
+  y += 10;
+  ctx.fillStyle = "#a08050";
+  ctx.font = "bold 11px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("BUILDINGS", STATS_X + STATS_W / 2, y);
+  y += 18;
+
+  for (const u of UPGRADES) {
+    const count = S.counts[u.id] || 0;
+    ctx.fillStyle = count > 0 ? "#d4c0a0" : "#333322";
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(u.icon + " " + u.name, STATS_X + 10, y);
+    ctx.textAlign = "right";
+    ctx.fillText("×" + count, STATS_X + STATS_W - 10, y);
+    y += 18;
+  }
+
+  // Offline info
+  y += 15;
+  ctx.fillStyle = "#554433";
+  ctx.font = "10px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Auto-saves every 5s", STATS_X + STATS_W / 2, y);
+  y += 14;
+  ctx.fillText("Offline earnings: 50% CPS", STATS_X + STATS_W / 2, y);
+  y += 14;
+  ctx.fillText("(max 8 hours)", STATS_X + STATS_W / 2, y);
+}
+
+// ── HUD ──────────────────────────────────────────────────────
+
+function drawHUD() {
+  // Cookie count
+  ctx.fillStyle = "#ffd43b";
+  ctx.shadowColor = "#ffd43b";
+  ctx.shadowBlur = 8;
+  ctx.font = "bold 28px 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(fmt(S.cookies), COOKIE_X, 50);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = "#a08050";
+  ctx.font = "14px sans-serif";
+  ctx.fillText(fmt(Math.floor(S.cookies)) + " cookies", COOKIE_X, 72);
+
+  const cps = totalCPS();
+  if (cps > 0) {
+    ctx.fillStyle = "#887766";
+    ctx.font = "12px sans-serif";
+    ctx.fillText(fmtRate(cps) + " per second", COOKIE_X, 90);
+  }
+
+  // Click hint
+  ctx.fillStyle = "#554433";
+  ctx.font = "11px sans-serif";
+  ctx.fillText("Click the cookie!", COOKIE_X, COOKIE_Y + COOKIE_R + 30);
+}
+
+// ── INPUT ────────────────────────────────────────────────────
+
+function screenCoords(e) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left) / rect.width * W,
+    y: (e.clientY - rect.top) / rect.height * H,
+  };
+}
+
+canvas.addEventListener("pointerdown", e => {
+  audio();
+  const p = screenCoords(e);
+
+  // Cookie click
+  const dx = p.x - COOKIE_X, dy = p.y - COOKIE_Y;
+  if (Math.sqrt(dx * dx + dy * dy) <= COOKIE_R * cookieScale) {
+    const val = clickValue();
+    S.cookies += val; S.totalBaked += val; S.lifetimeBaked += val; S.clicks++;
+    spawnFloat(p.x + (Math.random() - 0.5) * 30, p.y - 20, "+" + fmt(val), "#ffd43b");
+    spawnCrumbs(p.x, p.y, 5);
+    cookieScale = 0.92;
+    cookieGlow = 1;
+    clickSound();
+    return;
+  }
+
+  // Shop clicks
+  if (p.x >= SHOP_X && p.x < SHOP_X + SHOP_W) {
+    let y = 40 - shopScroll;
+    for (let i = 0; i < UPGRADES.length; i++) {
+      if (p.y >= y && p.y < y + 56) {
+        const cost = upgradeCost(i);
+        if (S.cookies >= cost) {
+          S.cookies -= cost;
+          S.counts[UPGRADES[i].id]++;
+          buySound();
+        }
+        return;
+      }
+      y += 60;
+    }
+    y += 27;
+    for (let i = 0; i < CLICK_UPGRADES.length; i++) {
+      if (p.y >= y && p.y < y + 48) {
+        const u = CLICK_UPGRADES[i];
+        if (S.clickMult < u.mult && S.cookies >= u.cost) {
+          S.cookies -= u.cost;
+          S.clickMult = u.mult;
+          buySound();
+        }
+        return;
+      }
+      y += 52;
+    }
+  }
+});
+
+canvas.addEventListener("pointermove", e => {
+  const p = screenCoords(e);
+  hoverUpgrade = -1;
+  hoverClickUpg = -1;
+
+  if (p.x >= SHOP_X && p.x < SHOP_X + SHOP_W) {
+    let y = 40 - shopScroll;
+    for (let i = 0; i < UPGRADES.length; i++) {
+      if (p.y >= y && p.y < y + 56) { hoverUpgrade = i; return; }
+      y += 60;
+    }
+    y += 27;
+    for (let i = 0; i < CLICK_UPGRADES.length; i++) {
+      if (p.y >= y && p.y < y + 48) { hoverClickUpg = i; return; }
+      y += 52;
+    }
+  }
+});
+
+canvas.addEventListener("wheel", e => {
+  shopScroll = Math.max(0, shopScroll + e.deltaY * 0.5);
+});
+
+// ── SAVE TIMER ───────────────────────────────────────────────
+
+setInterval(save, 5000);
+
+// ── MAIN LOOP ────────────────────────────────────────────────
+
+let lastTime = 0;
+let tickAccum = 0;
+
+function loop(ts) {
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+
+  // Auto-production
+  tickAccum += dt;
+  if (tickAccum >= 0.1) {
+    tickAccum -= 0.1;
+    const cps = totalCPS();
+    if (cps > 0) {
+      const add = cps * 0.1;
+      S.cookies += add; S.totalBaked += add; S.lifetimeBaked += add;
+    }
+  }
+
+  // Cookie bounce recovery
+  cookieScale += (1 - cookieScale) * 8 * dt;
+
+  updateParticles(dt);
+
+  // Draw
+  ctx.clearRect(0, 0, W, H);
+
+  // Background gradient
+  const bgGrad = ctx.createRadialGradient(COOKIE_X, COOKIE_Y, 0, COOKIE_X, COOKIE_Y, 400);
+  bgGrad.addColorStop(0, "#201a10");
+  bgGrad.addColorStop(1, "#1a1008");
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  drawHUD();
+  drawCookie();
+  drawParticles();
+  drawShop();
+  drawStats();
+
+  requestAnimationFrame(loop);
+}
+
+// ── INIT ─────────────────────────────────────────────────────
+
+if (hasSave()) {
+  load();
+  const off = offlineEarnings();
+  if (off > 0) {
+    S.cookies += off; S.totalBaked += off; S.lifetimeBaked += off;
+    setTimeout(() => spawnFloat(COOKIE_X, COOKIE_Y - 50, "+" + fmt(off) + " offline!", "#51cf66"), 500);
+  }
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
